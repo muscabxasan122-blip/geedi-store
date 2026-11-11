@@ -1,0 +1,242 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ==========================================
+// ENUMS
+// ==========================================
+
+enum UserRole {
+  ADMINISTRATOR
+  SALESMAN
+  INVENTORY_MANAGER
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum ProductStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum StockMovementType {
+  STOCK_IN
+  STOCK_OUT
+  ADJUSTMENT_IN
+  ADJUSTMENT_OUT
+  SALE
+  RETURN
+  SALE_CANCELLATION
+}
+
+enum SaleStatus {
+  COMPLETED
+  CANCELLED
+}
+
+// ==========================================
+// 1. USERS
+// ==========================================
+
+model User {
+  id           Int        @id @default(autoincrement())
+  fullName     String
+  username     String     @unique
+  passwordHash String
+  role         UserRole
+  status       UserStatus @default(ACTIVE)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relationships
+  sales             Sale[]          @relation("SalesmanSales")
+  cancelledSales    Sale[]          @relation("SaleCanceller")
+  stockMovements    StockMovement[]
+  authorizedReturns SalesReturn[]   @relation("ReturnAuthorizer")
+  auditLogs         AuditLog[]
+}
+
+// ==========================================
+// 2. PRODUCTS
+// ==========================================
+
+model Product {
+  id              Int           @id @default(autoincrement())
+  productCode     String        @unique
+  productName     String
+  category        String
+  costPrice       Decimal       @db.Decimal(10, 2)
+  sellingPrice    Decimal       @db.Decimal(10, 2)
+  quantityInStock Int           @default(0)
+  reorderLevel    Int           @default(0)
+  status          ProductStatus @default(ACTIVE)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relationships
+  stockMovements StockMovement[]
+  saleItems      SaleItem[]
+
+  @@index([productName])
+  @@index([category])
+}
+
+// ==========================================
+// 3. STOCK MOVEMENTS
+// ==========================================
+
+model StockMovement {
+  id           Int               @id @default(autoincrement())
+  productId    Int
+  userId       Int
+  movementType StockMovementType
+  quantity     Int
+  movementDate DateTime          @default(now())
+  notes        String?
+
+  // Optional references to related transactions
+  saleId        Int?
+  salesReturnId Int?
+
+  // Relationships
+  product     Product      @relation(fields: [productId], references: [id])
+  user        User         @relation(fields: [userId], references: [id])
+  sale        Sale?        @relation(fields: [saleId], references: [id])
+  salesReturn SalesReturn? @relation(fields: [salesReturnId], references: [id])
+
+  @@index([productId, movementDate])
+  @@index([userId, movementDate])
+}
+
+// ==========================================
+// 4. SALES
+// ==========================================
+
+model Sale {
+  id            Int      @id @default(autoincrement())
+  receiptNumber String   @unique
+  salesmanId    Int
+  saleDate      DateTime @default(now())
+
+  subtotal    Decimal @db.Decimal(10, 2)
+  discount    Decimal @default(0) @db.Decimal(10, 2)
+  totalAmount Decimal @db.Decimal(10, 2)
+
+  paymentMethod String
+  status        SaleStatus @default(COMPLETED)
+
+  // Cancellation information
+  cancellationReason String?
+  cancelledAt        DateTime?
+  cancelledById      Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relationships
+  salesman       User            @relation("SalesmanSales", fields: [salesmanId], references: [id])
+  cancelledBy    User?           @relation("SaleCanceller", fields: [cancelledById], references: [id])
+  items          SaleItem[]
+  returns        SalesReturn[]
+  stockMovements StockMovement[]
+
+  @@index([salesmanId, saleDate])
+  @@index([saleDate])
+}
+
+// ==========================================
+// 5. SALE ITEMS
+// ==========================================
+
+model SaleItem {
+  id        Int @id @default(autoincrement())
+  saleId    Int
+  productId Int
+
+  // Historical product information
+  productName String
+  productCode String
+
+  quantity  Int
+  unitPrice Decimal @db.Decimal(10, 2)
+  lineTotal Decimal @db.Decimal(10, 2)
+
+  // Relationships
+  sale        Sale              @relation(fields: [saleId], references: [id])
+  product     Product           @relation(fields: [productId], references: [id])
+  returnItems SalesReturnItem[]
+
+  @@index([saleId])
+  @@index([productId])
+}
+
+// ==========================================
+// 6. SALES RETURNS
+// ==========================================
+
+model SalesReturn {
+  id             Int      @id @default(autoincrement())
+  saleId         Int
+  authorizedById Int
+  reason         String
+  returnDate     DateTime @default(now())
+  amount         Decimal  @db.Decimal(10, 2)
+
+  // Relationships
+  sale           Sale              @relation(fields: [saleId], references: [id])
+  authorizedBy   User              @relation("ReturnAuthorizer", fields: [authorizedById], references: [id])
+  items          SalesReturnItem[]
+  stockMovements StockMovement[]
+
+  @@index([saleId])
+}
+
+// ==========================================
+// 7. SALES RETURN ITEMS
+// ==========================================
+
+model SalesReturnItem {
+  id         Int @id @default(autoincrement())
+  returnId   Int
+  saleItemId Int
+
+  quantity  Int
+  unitPrice Decimal @db.Decimal(10, 2)
+  lineTotal Decimal @db.Decimal(10, 2)
+
+  // Relationships
+  salesReturn SalesReturn @relation(fields: [returnId], references: [id])
+  saleItem    SaleItem    @relation(fields: [saleItemId], references: [id])
+
+  @@unique([returnId, saleItemId])
+}
+
+// ==========================================
+// 8. AUDIT LOGS
+// ==========================================
+
+model AuditLog {
+  id         Int      @id @default(autoincrement())
+  userId     Int?
+  action     String
+  entityType String
+  entityId   String?
+  details    Json?
+  createdAt  DateTime @default(now())
+
+  // Relationships
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([entityType, entityId])
+}
